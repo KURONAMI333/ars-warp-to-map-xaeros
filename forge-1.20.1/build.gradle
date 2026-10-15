@@ -1,0 +1,158 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'maven-publish'
+    id 'net.minecraftforge.gradle' version '[6.0.16,6.2)'
+    id 'org.parchmentmc.librarian.forgegradle' version '1.+'
+    id 'java-library'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)  // 1.20.1 = Java 17
+
+minecraft {
+    mappings channel: 'parchment', version: "${parchment_mappings_version}-${parchment_minecraft_version}"
+
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            // dev 実行で fg.deobf 依存 (Ars Nouveau) の refmap を SRG→開発名へ remap させる。
+            // ForgeGradle は deobf jar 内の refmap を remap しないため、これが無いと mixin 適用に失敗する。
+            // dev 専用の実行設定で、published jar には影響しない。
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        client { workingDirectory project.file('run') }
+    }
+}
+
+repositories {
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
+    maven {
+        name = 'ParchmentMC'
+        url = 'https://maven.parchmentmc.org'
+    }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // Ars Nouveau 本体: 巻物データの供給源（公開 API のアイテム/データ読み取りのみ使用）。
+    // 実配布 jar を fg.deobf で載せる。
+    compileOnly fg.deobf("maven.modrinth:ars-nouveau:${arsnouveau_version}")
+
+    // Xaero's Minimap 本体 (Forge 1.20.1)。Reflection 呼び出しのため compileOnly / 依存宣言は不要。
+    // dev 実機確認用 runtime のみ（published jar には漏れない）
+    runtimeOnly fg.deobf("maven.modrinth:xaeros-minimap:${xaeros_minimap_version_id}")
+    // Ars Nouveau 本体を dev 実行にも載せる（runClient 実機確認用・published jar には漏れない）
+    runtimeOnly fg.deobf("maven.modrinth:ars-nouveau:${arsnouveau_version}")
+
+    // 差分同期エンジンの単体テスト（純粋関数＝MC クラスパス不要）
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// テストは repo root の 1 コピーを共有する（セル間で重複させない）
+sourceSets.test.java.srcDir '../src/test/java'
+sourceSets.test.runtimeClasspath += sourceSets.main.compileClasspath
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            forge_version          : forge_version,
+            forge_version_range    : forge_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description
+    ]
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes([
+                'Specification-Title'     : mod_id,
+                'Specification-Vendor'    : mod_authors,
+                'Specification-Version'   : '1',
+                'Implementation-Title'    : project.name,
+                'Implementation-Version'  : project.jar.archiveVersion,
+                'Implementation-Vendor'   : mod_authors,
+                'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+        ])
+    }
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// 出荷 jar にテスト用足場が混入していないことを機械検査する（root セルと同型のゲート）
+def verifyNoTestScaffoldingInJar = tasks.register("verifyNoTestScaffoldingInJar") {
+    group = 'verification'
+    description = 'Fails if test scaffolding leaked into the published jar.'
+    dependsOn tasks.named('jar')
+
+    doLast {
+        def jarFile = tasks.named('jar', Jar).get().archiveFile.get().asFile
+        def bad = []
+        jarFile.withInputStream { ins ->
+            def jis = new java.util.jar.JarInputStream(ins)
+            java.util.jar.JarEntry entry
+            while ((entry = jis.nextJarEntry) != null) {
+                def name = entry.name
+                if (name.contains('gametest') || name =~ /tests?\// || name.endsWith('Test.class') || name.endsWith('Tests.class')) {
+                    bad << name
+                }
+            }
+        }
+        if (bad) {
+            throw new GradleException("Test scaffolding found in ${jarFile.name}:\n  " + bad.join('\n  '))
+        }
+        println "verifyNoTestScaffoldingInJar: OK (${jarFile.name})"
+    }
+}
+
+tasks.named('check') {
+    dependsOn verifyNoTestScaffoldingInJar
+}
+
+// LICENSE jar 同梱（LICENSE は repo root にのみ置く。inputs.file で不在時に build を落とす）
+def licenseFile = file('../LICENSE')
+def licenseRenamed = "LICENSE_${mod_id}"
+tasks.named('jar', Jar).configure {
+    inputs.file(licenseFile)
+    from(licenseFile) { rename { licenseRenamed } }
+}

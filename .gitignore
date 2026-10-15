@@ -1,0 +1,58 @@
+### Gradle ###
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/**/out/
+
+.run/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.eclipse/
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/**/bin/
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+RELEASE_HANDOFF.md
+
+
+### Minecraft Modding ###
+run/
+run-gametest/
+!**/src/**/run/
+**/src/generated/**/.cache/
+repo/
+!**/src/**/repo/
+
+### 3rd-party jars (NOT redistributable) ###
+libs-local/
+**/libs-local/
+
+### 3rd-party assets (NOT redistributable) ###
+# ロゴ制作の入力（他アドオンのロゴ・本体テクスチャのクローン）。ローカルには要るが追跡しない
+branding/_ref/
+branding/_cobblemon_assets/
+
+### Logs ###
+# gradle / dev client のログは C:\Users\<name>\ の絶対パスを含む
+logs/
+*.log
+

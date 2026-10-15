@@ -1,0 +1,174 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '2.0.141'
+    id 'idea'
+}
+
+tasks.named('wrapper', Wrapper).configure {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    runs {
+        client {
+            client()
+        }
+
+        server {
+            server()
+            programArgument '--nogui'
+        }
+
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+            loadedMods = [project.neoForge.mods.getByName(mod_id)]
+        }
+    }
+}
+
+repositories {
+    // Ars Nouveau / Xaero's Minimap 本体 (Modrinth maven)
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content { includeGroup "maven.modrinth" }
+    }
+}
+
+dependencies {
+    // Ars Nouveau: 巻物データの供給源（公開 API のみ使用・アイテム/データ部品の読み取りだけ）。
+    compileOnly("maven.modrinth:ars-nouveau:${arsnouveau_version}")
+
+    // ─── runClient 用ローカルランタイム（published jar には漏らさない）───
+    // Xaero's Minimap 本体。Reflection 呼び出しのため compileOnly / 依存宣言は不要
+    localRuntime "maven.modrinth:xaeros-minimap:${xaeros_version}"
+    localRuntime "maven.modrinth:ars-nouveau:${arsnouveau_version}"
+
+    // 差分同期エンジンの単体テスト（純粋関数＝MC クラスパス不要）
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_description        : mod_description,
+            mod_authors            : mod_authors,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            url "file://${project.projectDir}/repo"
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// 出荷 jar に テスト足場が混入していないことを機械検査する
+// （PLAYBOOK_GAMETEST Phase 1・mod-066 の multiloader 版を single-project 向けに移植）
+def verifyNoTestScaffoldingInJar = tasks.register("verifyNoTestScaffoldingInJar") {
+    group = 'verification'
+    description = 'Fails if test scaffolding leaked into the published jar.'
+    dependsOn tasks.named('jar')
+
+    doLast {
+        def jarFile = tasks.named('jar', Jar).get().archiveFile.get().asFile
+        def bad = []
+        jarFile.withInputStream { ins ->
+            def jis = new java.util.jar.JarInputStream(ins)
+            java.util.jar.JarEntry entry
+            while ((entry = jis.nextJarEntry) != null) {
+                def name = entry.name
+                if (name.contains('gametest') || name =~ /tests?\// || name.endsWith('Test.class') || name.endsWith('Tests.class')) {
+                    bad << name
+                }
+                if (name.endsWith('.class')) {
+                    def bytes = jis.readAllBytes()
+                    def pool = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                    ['net/minecraft/gametest', 'RegisterGameTestsEvent', 'GameTestInstance', 'GameTestHelper', 'TEST_INSTANCE'].each { marker ->
+                        if (pool.contains(marker)) bad << "${name} [refs ${marker}]"
+                    }
+                }
+            }
+        }
+        if (bad) {
+            throw new GradleException("Test scaffolding found in ${jarFile.name}:\n  " + bad.join('\n  '))
+        }
+        println "verifyNoTestScaffoldingInJar: OK (${jarFile.name})"
+    }
+}
+
+tasks.named('check') {
+    dependsOn verifyNoTestScaffoldingInJar
+}
+
+// LICENSE jar 同梱（NeoForge セル。LICENSE は repo root にのみ置く。inputs.file で不在時に build を落とす）
+def licenseFile = file('LICENSE')
+def licenseRenamed = "LICENSE_${mod_id}"
+tasks.named('jar', Jar).configure {
+    inputs.file(licenseFile)
+    from(licenseFile) { rename { licenseRenamed } }
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}

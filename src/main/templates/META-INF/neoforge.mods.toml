@@ -1,0 +1,42 @@
+modLoader="javafml"
+loaderVersion="${loader_version_range}"
+license="${mod_license}"
+issueTrackerURL="https://x.com/kuronami333"
+
+[[mods]]
+modId="${mod_id}"
+version="${mod_version}"
+displayName="${mod_name}"
+authors="${mod_authors}"
+displayURL="https://www.curseforge.com/minecraft/mc-mods/ars-warp-to-map"
+description='''
+${mod_description}
+'''
+
+[[dependencies.${mod_id}]]
+    modId="neoforge"
+    type="required"
+    versionRange="[${neo_version},)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="minecraft"
+    type="required"
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="BOTH"
+
+# Ars Nouveau: 巻物データの供給源。任意依存（不在なら静かに何もしない＝Inner クラス隔離）。
+# versionRange は下限を緩く取る: Ars の版は複合文字列（5.13.3-1.21.1 等）で、
+# 範囲比較が最初の "-" までしか見ない罠を避ける。
+[[dependencies.${mod_id}]]
+    modId="ars_nouveau"
+    type="optional"
+    versionRange="[0,)"
+    ordering="AFTER"
+    side="CLIENT"
+
+# Xaero's Minimap: 依存宣言しない（T2M/mod-076 に合わせる）。
+# Reflection 直叩きのため jar を参照せず、不在時は静かに何もしない
+# （巻物の読み取りも反映もクライアント側で完結し、Xaero 不在時は何も表示されないだけ）。
