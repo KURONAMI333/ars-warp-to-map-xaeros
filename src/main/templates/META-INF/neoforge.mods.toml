@@ -8,6 +8,7 @@ modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
 authors="${mod_authors}"
+logoFile="logo.png"
 displayURL="https://www.curseforge.com/minecraft/mc-mods/ars-warp-to-map-xaeros"
 description='''
 ${mod_description}
