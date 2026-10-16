@@ -1,0 +1,1 @@
+Show the destinations of the Ars Nouveau warp scrolls you carry as Xaero's Minimap waypoints, and remove them when you put the scrolls away.
