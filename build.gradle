@@ -71,6 +71,9 @@ dependencies {
     // Xaero's Minimap 本体。Reflection 呼び出しのため compileOnly / 依存宣言は不要
     localRuntime "maven.modrinth:xaeros-minimap:${xaeros_version}"
     localRuntime "maven.modrinth:ars-nouveau:${arsnouveau_version}"
+    // Ars Nouveau の必須依存（無いと dev クライアントが起動しない。配布 jar のメタデータは変えない）
+    localRuntime "maven.modrinth:curios:${curios_version_id}"
+    localRuntime "maven.modrinth:geckolib:${geckolib_version_id}"
 
     // 差分同期エンジンの単体テスト（純粋関数＝MC クラスパス不要）
     testImplementation platform('org.junit:junit-bom:5.10.2')

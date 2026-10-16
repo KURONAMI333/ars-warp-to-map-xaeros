@@ -65,6 +65,9 @@ dependencies {
     runtimeOnly fg.deobf("maven.modrinth:xaeros-minimap:${xaeros_minimap_version_id}")
     // Ars Nouveau 本体を dev 実行にも載せる（runClient 実機確認用・published jar には漏れない）
     runtimeOnly fg.deobf("maven.modrinth:ars-nouveau:${arsnouveau_version}")
+    // Ars Nouveau の必須依存（無いと dev クライアントが起動しない。配布 jar のメタデータは変えない）
+    runtimeOnly fg.deobf("maven.modrinth:curios:${curios_version_id}")
+    runtimeOnly fg.deobf("maven.modrinth:geckolib:${geckolib_version_id}")
 
     // 差分同期エンジンの単体テスト（純粋関数＝MC クラスパス不要）
     testImplementation platform('org.junit:junit-bom:5.10.2')
