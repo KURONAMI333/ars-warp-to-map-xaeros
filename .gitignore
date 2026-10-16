@@ -56,3 +56,6 @@ branding/_cobblemon_assets/
 logs/
 *.log
 
+### 引き継ぎ・私用（公開 repo に入れない） ###
+_handoff/
+GAP_LOG.md
