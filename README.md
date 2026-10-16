@@ -10,6 +10,8 @@ Everything is read on the client from your own inventory, so the mod works the s
 single-player, LAN, and on servers. It only looks at scrolls you are carrying. Chests
 and ender chests are not scanned.
 
+Waypoints created by this mod are recognized by their name, position, initials and color. If you edit one of them in Xaero (for example change its color), it is treated as your own waypoint and a new one is created.
+
 ## Requirements
 
 - [Ars Nouveau](https://modrinth.com/mod/ars-nouveau) for the warp scrolls

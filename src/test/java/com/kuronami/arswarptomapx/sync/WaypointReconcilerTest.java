@@ -219,7 +219,8 @@ class WaypointReconcilerTest {
     @Test
     void duplicateIdenticalEntitiesRemoveOnlyOne() {
         // 完全に同一の実体が 2 つ（利用者が同じ設定で複製した等）。記録から消えた時、
-        // 消すのは 1 つだけ。位置で狙い撃ちするのではなく、一致した実体を 1 つ消す設計。
+        // 消すのは 1 つだけ。完全一致が複数ある時はセット内で最後のものを選ぶ（利用者の
+        // 手作りは先頭に置かれ、この MOD の分は末尾に足されるため）。
         PointSnapshot a = point("a", "Base", 10, 64, -20);
 
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
@@ -228,7 +229,27 @@ class WaypointReconcilerTest {
                 List.of(entity(a), entity(a)),
                 true);
 
-        assertEquals(List.of(0), plan.removals());
+        assertEquals(List.of(1), plan.removals());
+        assertTrue(plan.record().isEmpty());
+    }
+
+    @Test
+    void identicalDuplicateRemovesLastSoUserWaypointAtHeadSurvives() {
+        // 完全に同一の属性（名前・座標・略号・色）が 2 つ並ぶ時。Xaero は利用者が手で作った
+        // ウェイポイントを先頭に置き、この MOD は add(..., false) で末尾へ追加する。巻物の地点が
+        // 記録から消える時は末尾（この MOD の作ったもの）を消し、先頭（利用者のもの）を残す。
+        PointSnapshot own = point("GammaFire", "GammaFire", 40, -60, 2);
+        WaypointReconciler.Entity user = entity(own); // 利用者が同じ設定で複製した実体
+        WaypointReconciler.Entity mine = entity(own);
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(),
+                Map.of(own.id(), own),
+                List.of(user, mine), // 先頭が利用者・末尾がこの MOD
+                true);
+
+        assertEquals(List.of(1), plan.removals()); // 末尾(1)を消し、先頭(0)は残す
+        assertTrue(plan.creations().isEmpty());
         assertTrue(plan.record().isEmpty());
     }
 

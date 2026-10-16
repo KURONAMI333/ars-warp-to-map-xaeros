@@ -142,12 +142,19 @@ public final class WaypointReconciler {
         return new Plan(removals, creations, record);
     }
 
-    /** 未使用の実体から {@code snapshot} と同名同座標のものを探し、その位置を返す（無ければ -1）。 */
+    /**
+     * 未使用の実体から {@code snapshot} と同名同座標のものを探し、その位置を返す（無ければ -1）。
+     *
+     * <p>完全に同じ属性の実体が複数ある時は <b>セット内で最後</b> のものを選ぶ。この MOD は
+     * {@code WaypointSet.add(..., false)} で末尾へ追加し、Xaero's Minimap は利用者が手で作った
+     * ウェイポイントを先頭に置くため、同名同座標が並ぶ時は末尾がこの MOD の作ったものである。
+     * 採用でも削除でも同じ位置の選び方を使う。</p>
+     */
     private static int findMatching(List<Entity> present, boolean[] claimed, PointSnapshot snapshot) {
         if (snapshot == null) {
             return -1;
         }
-        for (int i = 0; i < present.size(); i++) {
+        for (int i = present.size() - 1; i >= 0; i--) {
             if (!claimed[i] && present.get(i).samePointAs(snapshot)) {
                 return i;
             }
