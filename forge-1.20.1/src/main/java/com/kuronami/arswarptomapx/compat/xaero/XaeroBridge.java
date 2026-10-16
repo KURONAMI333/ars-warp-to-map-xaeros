@@ -67,16 +67,18 @@ public final class XaeroBridge {
      * @param curDimDesired 現在次元のあるべき地点集合（空でもよい＝全削除が正）
      * @param record        この MOD が入れたウェイポイントの記録。適用に成功した分だけ
      *                      更新される（失敗時は記録を変更しない＝部分適用を残さない）
+     * @param recordHealthy 記録ファイルが健全に読めたなら true（不在・破損時は false）。
+     *                      健全な時に記録に無い同名同座標の実体は利用者の手作りとして触らない
      * @return 適用できたら true。Xaero 不在・セッション未初期化・Xaero 側の
      *         現在ワールドがまだ別次元（切替ラグ）の場合は false＝次回再試行
      */
     public static boolean syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
-                                        WaypointRecord record) {
+                                        WaypointRecord record, boolean recordHealthy) {
         if (permanentlyUnavailable || record == null) {
             return false;
         }
         try {
-            return Inner.syncDimension(playerDimId, curDimDesired, record);
+            return Inner.syncDimension(playerDimId, curDimDesired, record, recordHealthy);
         } catch (Throwable t) {
             // 反映の失敗は静かに扱い次回再試行（XAERO_NOTES silent fail ポリシー）
             return false;
@@ -160,7 +162,7 @@ public final class XaeroBridge {
         }
 
         static boolean syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
-                                     WaypointRecord record) throws Exception {
+                                     WaypointRecord record, boolean recordHealthy) throws Exception {
             if (getCurrentSession == null) {
                 try {
                     resolve();
@@ -207,7 +209,7 @@ public final class XaeroBridge {
             // 「作成済み」は記録 ∩ セット内の実体。実体が無ければ作り直し、記録が無く実体だけ
             // あれば新規作成せず採用する（重複を作らない）
             WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
-                    curDimDesired, record.forDimension(playerDimId), views);
+                    curDimDesired, record.forDimension(playerDimId), views, recordHealthy);
 
             for (int index : plan.removals()) {
                 removeWaypoint.invoke(set, present.get(index));

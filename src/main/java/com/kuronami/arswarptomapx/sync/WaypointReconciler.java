@@ -17,9 +17,10 @@ import java.util.UUID;
  * 再起動後のセットに実体が残っていない場合がある。そのため「作成済み」を記録だけでは判定せず、
  * <b>記録と名前・座標が一致する実体が今のセットにあるもの</b>に限る。実体が無ければ作り直す。</p>
  *
- * <p>逆に、実体だけあって記録が無い（記録キーのずれ・記録破損・前回の異常終了）場合は、
- * 新規作成せずその実体を採用して記録に載せる（重複を作らない）。利用者が手で作った実体は、
- * 望ましい集合にも記録にも一致しない限り触らない。</p>
+ * <p>記録が読めていない（ファイル不在・破損）間は、実体だけあって記録が無い場合にその実体を
+ * 自分のものとして採用し記録に載せる（重複を作らない）。これに対し記録が健全に読めている時は、
+ * 記録に無いのに望ましい地点と同名同座標の実体を「利用者が手で作ったもの」とみなし、消さず・
+ * 採用もせず（自分の分を作らず）・記録にも載せない。望ましい地点に対応する実体が無ければ作り直す。</p>
  *
  * <p>MC / Xaero の型に依存しない（JUnit が MC クラスパス無しで回る）。実体は
  * {@link Entity}（名前と座標のみ）で受け取り、削除対象は実体リストの位置で返す。</p>
@@ -48,7 +49,7 @@ public final class WaypointReconciler {
      *
      * @param removals  実体リスト（reconcile に渡した {@code present}）のうち取り除くべき位置
      * @param creations 新規作成すべき地点（id 昇順）
-     * @param record    適用後にこの次元について記録へ載るべき内容（望ましい集合と一致する）
+     * @param record    適用後にこの次元について記録へ載るべき内容（この MOD が管理する地点だけ）
      */
     public record Plan(List<Integer> removals, List<PointSnapshot> creations,
                        Map<UUID, PointSnapshot> record) {
@@ -68,14 +69,16 @@ public final class WaypointReconciler {
     /**
      * 適用計画を立てる。
      *
-     * @param desired  この次元で望ましい地点集合（null 禁止・空は全削除が正）
-     * @param recorded この次元について記録に残っている地点集合（null 禁止）
-     * @param present  地図 MOD のセットに実在する実体（null 禁止・順序は呼び出し側の実体リストと一致）
+     * @param desired       この次元で望ましい地点集合（null 禁止・空は全削除が正）
+     * @param recorded      この次元について記録に残っている地点集合（null 禁止）
+     * @param present       地図 MOD のセットに実在する実体（null 禁止・順序は呼び出し側の実体リストと一致）
+     * @param recordHealthy 記録ファイルが健全に読めたなら true（不在・破損時は false）
      * @return 削除する実体の位置・作成する地点・適用後の記録内容
      */
     public static Plan reconcile(Map<UUID, PointSnapshot> desired,
                                  Map<UUID, PointSnapshot> recorded,
-                                 List<Entity> present) {
+                                 List<Entity> present,
+                                 boolean recordHealthy) {
         Objects.requireNonNull(desired, "desired");
         Objects.requireNonNull(recorded, "recorded");
         Objects.requireNonNull(present, "present");
@@ -86,18 +89,25 @@ public final class WaypointReconciler {
         Map<UUID, PointSnapshot> record = new LinkedHashMap<>();
 
         // 1) 望ましい各地点: 同名同座標の実体があれば採用（新規作成しない）、無ければ作成する。
+        //    ただし記録が健全に読めている時は、記録に無い実体を採用しない。利用者が手で作った
+        //    同名同座標の実体を自分のものと取り違え、後に消してしまう事故を防ぐ。
         List<PointSnapshot> desiredSorted = new ArrayList<>(desired.values());
         desiredSorted.sort(Comparator.comparing(PointSnapshot::id));
         for (PointSnapshot snapshot : desiredSorted) {
-            int index = claimMatching(present, claimed, snapshot);
+            boolean adoptable = !recordHealthy || recorded.get(snapshot.id()) != null;
+            int index = findMatching(present, claimed, snapshot);
             if (index < 0) {
                 creations.add(snapshot);
+                record.put(snapshot.id(), snapshot);
+            } else if (adoptable) {
+                claimed[index] = true;
+                record.put(snapshot.id(), snapshot);
             }
-            record.put(snapshot.id(), snapshot);
+            // index >= 0 かつ adoptable でない: 利用者が手で作った実体。消さず・採用もせず・記録にも載せない
         }
 
         // 2) 記録のうち望ましくないもの（内容が変わった・望ましい集合から消えた）:
-        //    同名同座標の実体があれば消す。記録からは常に落ちる（望ましい分だけが 1) で載る）。
+        //    同名同座標の実体があれば消す。記録からは常に落ちる（管理分だけが 1) で載る）。
         List<UUID> recordedIds = new ArrayList<>(recorded.keySet());
         recordedIds.sort(Comparator.naturalOrder());
         for (UUID id : recordedIds) {
@@ -106,8 +116,9 @@ public final class WaypointReconciler {
             if (want != null && want.equals(old)) {
                 continue; // 記録は最新。1) が実体を採用済み（またはセット内に無く作り直し予定）
             }
-            int index = claimMatching(present, claimed, old);
+            int index = findMatching(present, claimed, old);
             if (index >= 0) {
+                claimed[index] = true;
                 removals.add(index);
             }
         }
@@ -115,14 +126,13 @@ public final class WaypointReconciler {
         return new Plan(removals, creations, record);
     }
 
-    /** 未使用の実体から {@code snapshot} と同名同座標のものを 1 つ確保し、その位置を返す（無ければ -1）。 */
-    private static int claimMatching(List<Entity> present, boolean[] claimed, PointSnapshot snapshot) {
+    /** 未使用の実体から {@code snapshot} と同名同座標のものを探し、その位置を返す（無ければ -1）。 */
+    private static int findMatching(List<Entity> present, boolean[] claimed, PointSnapshot snapshot) {
         if (snapshot == null) {
             return -1;
         }
         for (int i = 0; i < present.size(); i++) {
             if (!claimed[i] && present.get(i).samePointAs(snapshot)) {
-                claimed[i] = true;
                 return i;
             }
         }

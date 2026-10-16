@@ -49,6 +49,9 @@ public final class SyncManager {
     /** この MOD が入れたウェイポイントの記録。 */
     private static WaypointRecord record = WaypointRecord.empty();
 
+    /** 記録ファイルを健全に読めたか（不在・破損時は false）。 */
+    private static boolean recordHealthy = false;
+
     /** 記録ファイルの読み込み元キー（ワールド識別子）。未確定なら null。 */
     private static String recordKey = null;
 
@@ -92,7 +95,7 @@ public final class SyncManager {
             return false; // ワールド未確定 → 次回再試行（ファイルへは触らない）
         }
         Map<UUID, PointSnapshot> currentDimDesired = LocationStateOps.filterByDimension(desired, dimensionId);
-        if (XaeroBridge.syncDimension(dimensionId, currentDimDesired, record)) {
+        if (XaeroBridge.syncDimension(dimensionId, currentDimDesired, record, recordHealthy)) {
             dirty = false;
             appliedDimensionId = dimensionId;
             RecordStore.save(key, record);
@@ -119,6 +122,7 @@ public final class SyncManager {
         dirty = false;
         appliedDimensionId = null;
         record = WaypointRecord.empty();
+        recordHealthy = false;
         recordKey = null;
     }
 
@@ -134,7 +138,9 @@ public final class SyncManager {
         if (key == null) {
             return null;
         }
-        record = RecordStore.load(key);
+        RecordStore.LoadResult loaded = RecordStore.load(key);
+        record = loaded.record();
+        recordHealthy = loaded.healthy();
         recordKey = key;
         return recordKey;
     }

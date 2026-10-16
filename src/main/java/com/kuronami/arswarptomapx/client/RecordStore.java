@@ -58,16 +58,25 @@ final class RecordStore {
         return null;
     }
 
-    /** 記録を読む。ファイル不在・読取失敗時は空の記録。 */
-    static WaypointRecord load(String worldKey) {
+    /**
+     * 読み込み結果。{@code healthy} はファイルが存在し内容を解釈できたか。ファイル不在・
+     * 読取失敗は {@code false}（記録は空扱い）。呼び出し側はこの区別で「この MOD の記録が
+     * 無い」のか「記録が読めない」のかを判断する（{@link com.kuronami.arswarptomapx.sync.WaypointReconciler}）。
+     */
+    record LoadResult(WaypointRecord record, boolean healthy) {
+    }
+
+    /** 記録を読む。ファイル不在・読取失敗時は空の記録（{@code healthy=false}）。 */
+    static LoadResult load(String worldKey) {
         Path file = fileFor(worldKey);
         if (file == null || !Files.isRegularFile(file)) {
-            return WaypointRecord.empty();
+            return new LoadResult(WaypointRecord.empty(), false);
         }
         try {
-            return WaypointRecord.parse(Files.readString(file, StandardCharsets.UTF_8));
+            return new LoadResult(
+                    WaypointRecord.parse(Files.readString(file, StandardCharsets.UTF_8)), true);
         } catch (IOException | RuntimeException e) {
-            return WaypointRecord.empty();
+            return new LoadResult(WaypointRecord.empty(), false);
         }
     }
 
