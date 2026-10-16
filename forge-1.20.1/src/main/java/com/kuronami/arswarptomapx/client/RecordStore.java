@@ -59,48 +59,56 @@ final class RecordStore {
     }
 
     /**
-     * 読み込み結果。{@code healthy} はファイルが存在し内容を解釈できたか。ファイル不在・
-     * 読取失敗は {@code false}（記録は空扱い）。呼び出し側はこの区別で「この MOD の記録が
-     * 無い」のか「記録が読めない」のかを判断する（{@link com.kuronami.arswarptomapx.sync.WaypointReconciler}）。
+     * 読み込み結果。{@code healthy} はファイルが存在し内容を最後まで解釈できたか。ファイル不在・
+     * 読取失敗・壊れた行の読み飛ばしは {@code false}（記録は読めた分だけ空扱いに近い）。呼び出し側は
+     * この区別で「この MOD の記録が無い」のか「記録が読めない」のかを判断する
+     * （{@link com.kuronami.arswarptomapx.sync.WaypointReconciler}）。
      */
     record LoadResult(WaypointRecord record, boolean healthy) {
     }
 
-    /** 記録を読む。ファイル不在・読取失敗時は空の記録（{@code healthy=false}）。 */
+    /**
+     * 記録を読む。ファイル不在・読取失敗時は空の記録（{@code healthy=false}）。壊れた行を
+     * 読み飛ばした場合も {@code healthy=false}（記録が欠けている可能性があるため不健全扱い）。
+     */
     static LoadResult load(String worldKey) {
         Path file = fileFor(worldKey);
         if (file == null || !Files.isRegularFile(file)) {
             return new LoadResult(WaypointRecord.empty(), false);
         }
         try {
-            return new LoadResult(
-                    WaypointRecord.parse(Files.readString(file, StandardCharsets.UTF_8)), true);
+            WaypointRecord parsed = WaypointRecord.parse(Files.readString(file, StandardCharsets.UTF_8));
+            return new LoadResult(parsed, !parsed.hadMalformedLines());
         } catch (IOException | RuntimeException e) {
             return new LoadResult(WaypointRecord.empty(), false);
         }
     }
 
-    /** 記録を書く。空になったらファイルを消す（残骸を増やさない）。 */
-    static void save(String worldKey, WaypointRecord record) {
+    /**
+     * 記録を書く。空になってもファイルは消さず、空ファイルとして残す。「ファイルが無い」を
+     * その世界で初めて使う時かキーがずれた時だけに限定し、空にした結果が次セッションで
+     * 不健全（＝手作り地点を取り込みうる）と誤判定されるのを防ぐ。
+     *
+     * @return 書けたら true。書けなかったら false（呼び出し側は記録を不健全に落とす）
+     */
+    static boolean save(String worldKey, WaypointRecord record) {
         Path file = fileFor(worldKey);
         if (file == null) {
-            return;
+            return false;
         }
         try {
-            if (record == null || record.isEmpty()) {
-                Files.deleteIfExists(file);
-                return;
-            }
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            Files.writeString(tmp, record.serialize(), StandardCharsets.UTF_8);
+            Files.writeString(tmp, record == null ? "" : record.serialize(), StandardCharsets.UTF_8);
             try {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException atomicUnsupported) {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
             }
+            return true;
         } catch (IOException | RuntimeException ignored) {
             // 記録が書けなくても本期の反映は済んでいる。次回同期で作り直す
+            return false;
         }
     }
 

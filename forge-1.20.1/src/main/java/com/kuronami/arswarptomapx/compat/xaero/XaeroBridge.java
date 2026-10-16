@@ -51,6 +51,16 @@ import java.util.UUID;
  */
 public final class XaeroBridge {
 
+    /** {@link #syncDimension} の結果。呼び出し側は「適用済み」「次回再試行」「失敗（記録不健全）」を区別する。 */
+    public enum Outcome {
+        /** 適用した（記録も更新済み）。 */
+        APPLIED,
+        /** 前提未達（Xaero 不在・セッション未初期化・このワールドが別次元）。次回再試行。記録は無事。 */
+        RETRY,
+        /** 例外で中断した。記録がずれている可能性があるので、呼び出し側はそのセッションの記録を不健全に落とす。 */
+        FAILED
+    }
+
     /** Reflection 解決が一度でも失敗したら true（Xaero 不在 / API drift）。以降即 no-op。 */
     private static volatile boolean permanentlyUnavailable = false;
 
@@ -69,19 +79,21 @@ public final class XaeroBridge {
      *                      更新される（失敗時は記録を変更しない＝部分適用を残さない）
      * @param recordHealthy 記録ファイルが健全に読めたなら true（不在・破損時は false）。
      *                      健全な時に記録に無い同名同座標の実体は利用者の手作りとして触らない
-     * @return 適用できたら true。Xaero 不在・セッション未初期化・Xaero 側の
-     *         現在ワールドがまだ別次元（切替ラグ）の場合は false＝次回再試行
+     * @return {@link Outcome#APPLIED}（適用済み）・{@link Outcome#RETRY}（前提未達で次回再試行）・
+     *         {@link Outcome#FAILED}（例外で中断。呼び出し側は記録を不健全に落とす）
      */
-    public static boolean syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
+    public static Outcome syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
                                         WaypointRecord record, boolean recordHealthy) {
         if (permanentlyUnavailable || record == null) {
-            return false;
+            return Outcome.RETRY;
         }
         try {
-            return Inner.syncDimension(playerDimId, curDimDesired, record, recordHealthy);
+            return Inner.syncDimension(playerDimId, curDimDesired, record, recordHealthy)
+                    ? Outcome.APPLIED : Outcome.RETRY;
         } catch (Throwable t) {
-            // 反映の失敗は静かに扱い次回再試行（XAERO_NOTES silent fail ポリシー）
-            return false;
+            // 反映の失敗は静かに扱い次回再試行（XAERO_NOTES silent fail ポリシー）。
+            // 記録が部分更新の可能性があるため失敗として返し、呼び出し側に不健全化を委ねる。
+            return Outcome.FAILED;
         }
     }
 

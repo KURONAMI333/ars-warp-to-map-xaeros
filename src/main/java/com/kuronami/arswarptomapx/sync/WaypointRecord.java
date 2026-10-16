@@ -29,6 +29,9 @@ public final class WaypointRecord {
 
     private final Map<UUID, PointSnapshot> entries = new LinkedHashMap<>();
 
+    /** {@link #parse} が非空の壊れた行を読み飛ばしたら true（記録の健全性判定に使う）。 */
+    private boolean hadMalformedLines;
+
     public WaypointRecord() {
     }
 
@@ -36,6 +39,7 @@ public final class WaypointRecord {
     public WaypointRecord(WaypointRecord source) {
         if (source != null) {
             this.entries.putAll(source.entries);
+            this.hadMalformedLines = source.hadMalformedLines;
         }
     }
 
@@ -45,6 +49,14 @@ public final class WaypointRecord {
 
     public boolean isEmpty() {
         return entries.isEmpty();
+    }
+
+    /**
+     * 読取時に非空の壊れた行を 1 つ以上読み飛ばしたか。true なら記録が欠けている可能性があるため、
+     * 呼び出し側は健全でないものとして扱う（空行は壊れた行とみなさない）。
+     */
+    public boolean hadMalformedLines() {
+        return hadMalformedLines;
     }
 
     public int size() {
@@ -127,7 +139,10 @@ public final class WaypointRecord {
         return sb.toString();
     }
 
-    /** テキストから読む。壊れた行は読み飛ばす（例外にしない）。 */
+    /**
+     * テキストから読む。壊れた行は読み飛ばす（例外にしない）。読み飛ばした事実は
+     * {@link #hadMalformedLines()} に残し、呼び出し側が記録の健全性を判断できるようにする。
+     */
     public static WaypointRecord parse(String text) {
         WaypointRecord record = new WaypointRecord();
         if (text == null || text.isEmpty()) {
@@ -140,6 +155,7 @@ public final class WaypointRecord {
             }
             String[] parts = line.split("\\" + SEP, -1);
             if (parts.length != FIELD_COUNT) {
+                record.hadMalformedLines = true;
                 continue;
             }
             try {
@@ -153,7 +169,8 @@ public final class WaypointRecord {
                         decode(parts[5]),
                         Integer.parseInt(parts[4])));
             } catch (RuntimeException ignored) {
-                // 1 行の破損で全体の同期を止めない（その行だけ捨てる）
+                // 1 行の破損で全体の同期を止めない（その行だけ捨てるが、記録は不健全として扱う）
+                record.hadMalformedLines = true;
             }
         }
         return record;

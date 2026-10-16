@@ -19,8 +19,9 @@ import java.util.UUID;
  *
  * <p>記録が読めていない（ファイル不在・破損）間は、実体だけあって記録が無い場合にその実体を
  * 自分のものとして採用し記録に載せる（重複を作らない）。これに対し記録が健全に読めている時は、
- * 記録に無いのに望ましい地点と同名同座標の実体を「利用者が手で作ったもの」とみなし、消さず・
- * 採用もせず（自分の分を作らず）・記録にも載せない。望ましい地点に対応する実体が無ければ作り直す。</p>
+ * 記録の内容と完全に一致する地点（同じ id で名前・座標なども同一）だけを採用する。巻物を改名・
+ * 移動した結果、記録に無い同名同座標の実体（利用者が手で作ったもの）と一致しても取り込まず、
+ * 消さず・採用もせず・記録にも載せない。望ましい地点に対応する実体が無ければ作り直す。</p>
  *
  * <p>MC / Xaero の型に依存しない（JUnit が MC クラスパス無しで回る）。実体は
  * {@link Entity}（名前と座標のみ）で受け取り、削除対象は実体リストの位置で返す。</p>
@@ -89,12 +90,13 @@ public final class WaypointReconciler {
         Map<UUID, PointSnapshot> record = new LinkedHashMap<>();
 
         // 1) 望ましい各地点: 同名同座標の実体があれば採用（新規作成しない）、無ければ作成する。
-        //    ただし記録が健全に読めている時は、記録に無い実体を採用しない。利用者が手で作った
-        //    同名同座標の実体を自分のものと取り違え、後に消してしまう事故を防ぐ。
+        //    ただし記録が健全に読めている時は、記録の内容と完全に一致する地点だけを採用する。
+        //    巻物を改名・移動した後に、たまたま同名同座標の手作り実体があっても取り違えて
+        //    消してしまわないようにする（利用者が手で作った実体を自分のものとみなさない）。
         List<PointSnapshot> desiredSorted = new ArrayList<>(desired.values());
         desiredSorted.sort(Comparator.comparing(PointSnapshot::id));
         for (PointSnapshot snapshot : desiredSorted) {
-            boolean adoptable = !recordHealthy || recorded.get(snapshot.id()) != null;
+            boolean adoptable = !recordHealthy || snapshot.equals(recorded.get(snapshot.id()));
             int index = findMatching(present, claimed, snapshot);
             if (index < 0) {
                 creations.add(snapshot);

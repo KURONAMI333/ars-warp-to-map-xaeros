@@ -4,6 +4,7 @@ import com.kuronami.arswarptomapx.ArsWarpToMap;
 import com.kuronami.arswarptomapx.compat.xaero.XaeroBridge;
 import com.kuronami.arswarptomapx.sync.LocationStateOps;
 import com.kuronami.arswarptomapx.sync.PointSnapshot;
+import com.kuronami.arswarptomapx.sync.RecordHealth;
 import com.kuronami.arswarptomapx.sync.WaypointPlanner;
 import com.kuronami.arswarptomapx.sync.WaypointRecord;
 
@@ -31,6 +32,11 @@ import java.util.UUID;
  * <p><b>自作ウェイポイントの記録</b>: Xaero へ入れた地点は {@link WaypointRecord} に残し、
  * ワールド単位で {@link RecordStore} に永続化する。削除・置換の対象をこの記録と
  * 名前・座標が一致するものだけに限り、利用者の手作りウェイポイントを消さない。</p>
+ *
+ * <p><b>記録の健全性</b>: ファイルが読めない・壊れた行がある・同期が例外で中断した・保存に
+ * 失敗した、のいずれかでそのセッションは不健全に落ちる（{@link RecordHealth}）。不健全な間は
+ * 記録に無い同名同座標の実体を取り込む（手作り地点の取り違えより重複回避を優先）。なお空に
+ * なった記録ファイルは消さず空のまま残す（次セッションで健全に読めるようにする）。</p>
  *
  * <p>Xaero 側が準備できていない間に走査しても、dirty を保持したまま tick ループから
  * 再試行する（取りこぼし無し）。</p>
@@ -95,14 +101,20 @@ public final class SyncManager {
             return false; // ワールド未確定 → 次回再試行（ファイルへは触らない）
         }
         Map<UUID, PointSnapshot> currentDimDesired = LocationStateOps.filterByDimension(desired, dimensionId);
-        if (XaeroBridge.syncDimension(dimensionId, currentDimDesired, record, recordHealthy)) {
+        XaeroBridge.Outcome outcome = XaeroBridge.syncDimension(dimensionId, currentDimDesired, record, recordHealthy);
+        if (outcome == XaeroBridge.Outcome.APPLIED) {
             dirty = false;
             appliedDimensionId = dimensionId;
-            RecordStore.save(key, record);
+            // 保存に失敗したら、そのセッションの記録は実体とずれている可能性がある → 不健全に落とす
+            recordHealthy = RecordHealth.afterSave(recordHealthy, RecordStore.save(key, record));
             ArsWarpToMap.LOGGER.debug(
                     "Synced {} waypoint(s) into {} for {}",
                     currentDimDesired.size(), dimensionId, key);
             return true;
+        }
+        if (outcome == XaeroBridge.Outcome.FAILED) {
+            // 例外で中断。記録が部分更新かもしれないので、以降このセッションは不健全扱い
+            recordHealthy = RecordHealth.afterSync(recordHealthy, true);
         }
         return false;
     }
