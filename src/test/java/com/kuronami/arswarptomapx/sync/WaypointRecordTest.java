@@ -69,6 +69,38 @@ class WaypointRecordTest {
     }
 
     @Test
+    void malformedNonBlankLineMarksRecordUnhealthy() {
+        String text = ""
+                + id("ok") + "|5|6|7|8|minecraft:overworld|Good\n"
+                + "not-a-uuid|1|2|3|4|minecraft:overworld|Base\n";
+
+        WaypointRecord parsed = WaypointRecord.parse(text);
+
+        assertEquals(1, parsed.size());
+        assertTrue(parsed.hadMalformedLines());
+    }
+
+    @Test
+    void wrongFieldCountMarksRecordUnhealthy() {
+        WaypointRecord parsed = WaypointRecord.parse("missing|fields\n");
+
+        assertTrue(parsed.isEmpty());
+        assertTrue(parsed.hadMalformedLines());
+    }
+
+    @Test
+    void blankLinesAndCleanParseAreHealthy() {
+        WaypointRecord clean = WaypointRecord.parse(id("a") + "|1|2|3|10|minecraft:overworld|A\n");
+        assertFalse(clean.hadMalformedLines());
+
+        WaypointRecord blanks = WaypointRecord.parse("\n   \n" + id("a") + "|1|2|3|10|minecraft:overworld|A\n");
+        assertFalse(blanks.hadMalformedLines());
+
+        assertFalse(WaypointRecord.parse("").hadMalformedLines());
+        assertFalse(WaypointRecord.parse(null).hadMalformedLines());
+    }
+
+    @Test
     void replaceDimensionSwapsOnlyThatDimension() {
         WaypointRecord record = WaypointRecord.empty();
         PointSnapshot overOld = point("o", "Old", 0, 0, 0, "minecraft:overworld", 0);

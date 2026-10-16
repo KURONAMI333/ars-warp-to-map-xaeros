@@ -156,6 +156,46 @@ class WaypointReconcilerTest {
     }
 
     @Test
+    void renameDoesNotAdoptUserWaypointWithSameNewName() {
+        // 巻物を改名した（記録は「Base」・望ましい集合は「Home」）。同じ場所に利用者が手で作った
+        // 「Home」がある。id の有無だけで取り込むと、この手作り地点を自分のものと取り違えて
+        // 後に消してしまう。記録の内容と一致しない実体は採用せず、利用者の実体も消さない。
+        PointSnapshot recorded = point("a", "Base", 10, 64, -20);
+        PointSnapshot renamed = new PointSnapshot(recorded.id(), "Home", 10, 64, -20,
+                recorded.dimensionId(), recorded.rgb());
+        WaypointReconciler.Entity user = new WaypointReconciler.Entity("Home", 10, 64, -20);
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(renamed.id(), renamed),
+                Map.of(recorded.id(), recorded),
+                List.of(user),
+                true);
+
+        assertTrue(plan.creations().isEmpty()); // 手作りの「Home」は取り込まない
+        assertTrue(plan.removals().isEmpty());  // 座標が一致する利用者の実体も消さない
+        assertTrue(plan.record().isEmpty());    // 自分の管理分として記録にも載せない
+        assertFalse(plan.changesTheSet());
+    }
+
+    @Test
+    void renameReplacesOwnOldEntity() {
+        // 手作り地点が無い普通の改名。旧名の自分の実体を消し、新名で作り直す。
+        PointSnapshot recorded = point("a", "Base", 10, 64, -20);
+        PointSnapshot renamed = new PointSnapshot(recorded.id(), "Home", 10, 64, -20,
+                recorded.dimensionId(), recorded.rgb());
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(renamed.id(), renamed),
+                Map.of(recorded.id(), recorded),
+                List.of(entity(recorded)),
+                true);
+
+        assertEquals(List.of(0), plan.removals());       // 旧名の実体を消す
+        assertEquals(List.of(renamed), plan.creations()); // 新名で作り直す
+        assertEquals(Map.of(renamed.id(), renamed), plan.record());
+    }
+
+    @Test
     void cleanStateIsNoOp() {
         PointSnapshot a = point("a", "Base", 10, 64, -20);
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
