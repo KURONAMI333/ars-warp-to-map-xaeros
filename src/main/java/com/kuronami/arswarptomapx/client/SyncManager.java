@@ -113,7 +113,8 @@ public final class SyncManager {
             return true;
         }
         if (outcome == XaeroBridge.Outcome.FAILED) {
-            // 例外で中断。記録が部分更新かもしれないので、以降このセッションは不健全扱い
+            // ここへ来るのは最初の書き込み後に例外で中断した場合だけ（書き込み前の例外は RETRY で来る）。
+            // 記録が部分更新かもしれないので、以降このセッションは不健全扱い
             recordHealthy = RecordHealth.afterSync(recordHealthy, true);
         }
         return false;

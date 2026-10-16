@@ -2,6 +2,7 @@ package com.kuronami.arswarptomapx.compat.xaero;
 
 import com.kuronami.arswarptomapx.ArsWarpToMap;
 import com.kuronami.arswarptomapx.sync.PointSnapshot;
+import com.kuronami.arswarptomapx.sync.SyncWriteStage;
 import com.kuronami.arswarptomapx.sync.WaypointRecord;
 import com.kuronami.arswarptomapx.sync.WaypointReconciler;
 
@@ -55,9 +56,10 @@ public final class XaeroBridge {
     public enum Outcome {
         /** 適用した（記録も更新済み）。 */
         APPLIED,
-        /** 前提未達（Xaero 不在・セッション未初期化・このワールドが別次元）。次回再試行。記録は無事。 */
+        /** 前提未達（Xaero 不在・セッション未初期化・このワールドが別次元）、または最初の書き込み前の例外。
+         *  次回再試行。記録は無事で、不健全に落とす必要はない。 */
         RETRY,
-        /** 例外で中断した。記録がずれている可能性があるので、呼び出し側はそのセッションの記録を不健全に落とす。 */
+        /** 最初の書き込み後に例外で中断した。部分適用の可能性があるので、呼び出し側はそのセッションの記録を不健全に落とす。 */
         FAILED
     }
 
@@ -79,8 +81,8 @@ public final class XaeroBridge {
      *                      更新される（失敗時は記録を変更しない＝部分適用を残さない）
      * @param recordHealthy 記録ファイルが健全に読めたなら true（不在・破損時は false）。
      *                      健全な時に記録に無い同名同座標の実体は利用者の手作りとして触らない
-     * @return {@link Outcome#APPLIED}（適用済み）・{@link Outcome#RETRY}（前提未達で次回再試行）・
-     *         {@link Outcome#FAILED}（例外で中断。呼び出し側は記録を不健全に落とす）
+     * @return {@link Outcome#APPLIED}（適用済み）・{@link Outcome#RETRY}（前提未達・最初の書き込み前の例外で
+     *         次回再試行）・{@link Outcome#FAILED}（最初の書き込み後の例外で中断。呼び出し側は記録を不健全に落とす）
      */
     public static Outcome syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
                                         WaypointRecord record, boolean recordHealthy) {
@@ -88,12 +90,11 @@ public final class XaeroBridge {
             return Outcome.RETRY;
         }
         try {
-            return Inner.syncDimension(playerDimId, curDimDesired, record, recordHealthy)
-                    ? Outcome.APPLIED : Outcome.RETRY;
+            return Inner.syncDimension(playerDimId, curDimDesired, record, recordHealthy);
         } catch (Throwable t) {
-            // 反映の失敗は静かに扱い次回再試行（XAERO_NOTES silent fail ポリシー）。
-            // 記録が部分更新の可能性があるため失敗として返し、呼び出し側に不健全化を委ねる。
-            return Outcome.FAILED;
+            // Inner が例外を分類して返す。ここへ来るのは Inner の外側の想定外の失敗だけ。
+            // 書き込みは Inner の中でしか起きないので、記録を不健全にはしない（次回再試行）。
+            return Outcome.RETRY;
         }
     }
 
@@ -173,71 +174,82 @@ public final class XaeroBridge {
             throw new NoSuchMethodException("WaypointSet.add(Waypoint, boolean) not found");
         }
 
-        static boolean syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
-                                     WaypointRecord record, boolean recordHealthy) throws Exception {
-            if (getCurrentSession == null) {
-                try {
-                    resolve();
-                } catch (Throwable t) {
-                    permanentlyUnavailable = true; // Xaero 不在 / API drift → 以降静かに no-op
-                    return false;
+        static Outcome syncDimension(String playerDimId, Map<UUID, PointSnapshot> curDimDesired,
+                                     WaypointRecord record, boolean recordHealthy) {
+            // 最初の削除・作成を始めるまでを記録し、例外の扱いを分ける:
+            // 書き込み前の例外は再試行（記録は無事）、書き込み開始後の例外は部分適用の可能性があるため失敗。
+            SyncWriteStage stage = new SyncWriteStage();
+            try {
+                if (getCurrentSession == null) {
+                    try {
+                        resolve();
+                    } catch (Throwable t) {
+                        permanentlyUnavailable = true; // Xaero 不在 / API drift → 以降静かに no-op
+                        return Outcome.RETRY;
+                    }
                 }
-            }
-            Object session = getCurrentSession.invoke(minimapModule);
-            if (session == null) {
-                return false; // HUD セッション未初期化 → 次回再試行
-            }
-            Object manager = getWorldManager.invoke(session);
-            if (manager == null) {
-                return false;
-            }
-            Object world = getCurrentWorld.invoke(manager);
-            if (world == null) {
-                return false;
-            }
-            // 次元フィルタ: Xaero 側の current world がプレイヤー次元と一致する時だけ触る
-            // （不一致＝切替ラグ中。誤った次元のセットへ書き込む事故を防ぐ）
-            ResourceKey<?> xaeroDim = (ResourceKey<?>) getDimId.invoke(world);
-            if (xaeroDim == null || !playerDimId.equals(xaeroDim.location().toString())) {
-                return false;
-            }
-            Object set = getCurrentWaypointSet.invoke(world);
-            if (set == null) {
-                return false;
-            }
+                Object session = getCurrentSession.invoke(minimapModule);
+                if (session == null) {
+                    return Outcome.RETRY; // HUD セッション未初期化 → 次回再試行
+                }
+                Object manager = getWorldManager.invoke(session);
+                if (manager == null) {
+                    return Outcome.RETRY;
+                }
+                Object world = getCurrentWorld.invoke(manager);
+                if (world == null) {
+                    return Outcome.RETRY;
+                }
+                // 次元フィルタ: Xaero 側の current world がプレイヤー次元と一致する時だけ触る
+                // （不一致＝切替ラグ中。誤った次元のセットへ書き込む事故を防ぐ）
+                ResourceKey<?> xaeroDim = (ResourceKey<?>) getDimId.invoke(world);
+                if (xaeroDim == null || !playerDimId.equals(xaeroDim.location().toString())) {
+                    return Outcome.RETRY;
+                }
+                Object set = getCurrentWaypointSet.invoke(world);
+                if (set == null) {
+                    return Outcome.RETRY;
+                }
 
-            // 現セット内の実体。名前・座標は判定に、オブジェクト自体は削除に使う
-            List<Object> present = new ArrayList<>();
-            List<WaypointReconciler.Entity> views = new ArrayList<>();
-            for (Object waypoint : (Iterable<?>) getWaypoints.invoke(set)) {
-                present.add(waypoint);
-                views.add(new WaypointReconciler.Entity(
-                        (String) waypointGetName.invoke(waypoint),
-                        (Integer) waypointGetX.invoke(waypoint),
-                        (Integer) waypointGetY.invoke(waypoint),
-                        (Integer) waypointGetZ.invoke(waypoint)));
-            }
+                // 現セット内の実体。名前・座標は判定に、オブジェクト自体は削除に使う
+                List<Object> present = new ArrayList<>();
+                List<WaypointReconciler.Entity> views = new ArrayList<>();
+                for (Object waypoint : (Iterable<?>) getWaypoints.invoke(set)) {
+                    present.add(waypoint);
+                    views.add(new WaypointReconciler.Entity(
+                            (String) waypointGetName.invoke(waypoint),
+                            (Integer) waypointGetX.invoke(waypoint),
+                            (Integer) waypointGetY.invoke(waypoint),
+                            (Integer) waypointGetZ.invoke(waypoint)));
+                }
 
-            // 「作成済み」は記録 ∩ セット内の実体。実体が無ければ作り直し、記録が無く実体だけ
-            // あれば新規作成せず採用する（重複を作らない）
-            WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
-                    curDimDesired, record.forDimension(playerDimId), views, recordHealthy);
+                // 「作成済み」は記録 ∩ セット内の実体。実体が無ければ作り直し、記録が無く実体だけ
+                // あれば新規作成せず採用する（重複を作らない）
+                WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                        curDimDesired, record.forDimension(playerDimId), views, recordHealthy);
 
-            for (int index : plan.removals()) {
-                removeWaypoint.invoke(set, present.get(index));
-            }
-            for (PointSnapshot snapshot : plan.creations()) {
-                addWithFlag.invoke(set, createWaypoint(snapshot), Boolean.FALSE); // false = 末尾追加
-            }
+                for (int index : plan.removals()) {
+                    stage.beginWrite();
+                    removeWaypoint.invoke(set, present.get(index));
+                }
+                for (PointSnapshot snapshot : plan.creations()) {
+                    stage.beginWrite();
+                    addWithFlag.invoke(set, createWaypoint(snapshot), Boolean.FALSE); // false = 末尾追加
+                }
 
-            // ここまで例外が無ければ記録をこの次元分だけ差し替える（部分適用を残さない）
-            record.replaceDimension(playerDimId, plan.record());
+                // ここまで例外が無ければ記録をこの次元分だけ差し替える（部分適用を残さない）
+                record.replaceDimension(playerDimId, plan.record());
 
-            // 変更を加えた時だけ Xaero 自身の保存経路を呼ぶ（add だけでは保存されない版がある）
-            if (plan.changesTheSet()) {
-                saveWorld(session, world);
+                // 変更を加えた時だけ Xaero 自身の保存経路を呼ぶ（add だけでは保存されない版がある）
+                if (plan.changesTheSet()) {
+                    saveWorld(session, world);
+                }
+                return Outcome.APPLIED;
+            } catch (Throwable t) {
+                // 反映の失敗は静かに扱い次回再試行（XAERO_NOTES silent fail ポリシー）。
+                // 最初の書き込み前なら記録は無事で再試行、開始後なら部分適用の可能性があるため失敗。
+                return stage.failureCorruptsRecord() ? Outcome.FAILED : Outcome.RETRY;
             }
-            return true;
         }
 
         /**
