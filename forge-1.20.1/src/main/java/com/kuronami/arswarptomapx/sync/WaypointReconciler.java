@@ -1,5 +1,7 @@
 package com.kuronami.arswarptomapx.sync;
 
+import com.kuronami.arswarptomapx.compat.xaero.Initials;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -24,24 +26,36 @@ import java.util.UUID;
  * 消さず・採用もせず・記録にも載せない。望ましい地点に対応する実体が無ければ作り直す。</p>
  *
  * <p>MC / Xaero の型に依存しない（JUnit が MC クラスパス無しで回る）。実体は
- * {@link Entity}（名前と座標のみ）で受け取り、削除対象は実体リストの位置で返す。</p>
+ * {@link Entity}（名前・座標・略号・色）で受け取り、削除対象は実体リストの位置で返す。</p>
  */
 public final class WaypointReconciler {
 
     private WaypointReconciler() {
     }
 
-    /** セット内の実体 1 件の、判定に必要な情報だけを持つ値。 */
-    public record Entity(String name, int x, int y, int z) {
+    /**
+     * セット内の実体 1 件の、判定に必要な情報だけを持つ値。
+     *
+     * @param initials   ミニマップ上の略号（{@code getInitials()}・null は {@code ""}）
+     * @param colorIndex ウェイポイント色（{@code getColor()} = {@code WaypointColor.ordinal()}）
+     */
+    public record Entity(String name, int x, int y, int z, String initials, int colorIndex) {
 
         /** 他 MOD が API で入れた名前 null の実体でも同期を止めない（{@code ""} として扱う）。 */
         public Entity {
             name = name == null ? "" : name;
+            initials = initials == null ? "" : initials;
         }
 
-        /** 記録・望ましい地点と同じ地点か（名前と座標が一致。判定則は {@link WaypointMatching} と同一）。 */
+        /** 「この MOD が作る地点」の属性（{@link PointSnapshot}）から実体のビューを作る。 */
+        public static Entity of(PointSnapshot snapshot) {
+            return new Entity(snapshot.name(), snapshot.x(), snapshot.y(), snapshot.z(),
+                    Initials.of(snapshot.name()), WaypointMatching.expectedColorIndex(snapshot));
+        }
+
+        /** 記録・望ましい地点と同じ地点か（名前・座標・略号・色が一致。判定則は {@link WaypointMatching} と同一）。 */
         public boolean samePointAs(PointSnapshot snapshot) {
-            return WaypointMatching.samePoint(snapshot, name, x, y, z);
+            return WaypointMatching.samePoint(snapshot, name, x, y, z, initials, colorIndex);
         }
     }
 

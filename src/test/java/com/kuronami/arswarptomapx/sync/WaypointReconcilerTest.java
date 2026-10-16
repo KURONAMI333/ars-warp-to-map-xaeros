@@ -26,7 +26,7 @@ class WaypointReconcilerTest {
     }
 
     private static WaypointReconciler.Entity entity(PointSnapshot s) {
-        return new WaypointReconciler.Entity(s.name(), s.x(), s.y(), s.z());
+        return WaypointReconciler.Entity.of(s);
     }
 
     @Test
@@ -142,7 +142,7 @@ class WaypointReconcilerTest {
     @Test
     void userWaypointIsLeftUntouched() {
         PointSnapshot a = point("a", "Base", 10, 64, -20);
-        WaypointReconciler.Entity user = new WaypointReconciler.Entity("My Spot", 1, 2, 3);
+        WaypointReconciler.Entity user = new WaypointReconciler.Entity("My Spot", 1, 2, 3, "MS", 1);
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(a.id(), a),
@@ -158,12 +158,13 @@ class WaypointReconcilerTest {
     @Test
     void renameDoesNotAdoptUserWaypointWithSameNewName() {
         // 巻物を改名した（記録は「Base」・望ましい集合は「Home」）。同じ場所に利用者が手で作った
-        // 「Home」がある。id の有無だけで取り込むと、この手作り地点を自分のものと取り違えて
-        // 後に消してしまう。記録の内容と一致しない実体は採用せず、利用者の実体も消さない。
+        // 「Home」（この MOD が与える略号・色とは違う）がある。名前と座標だけで一致とみなすと、
+        // この手作り地点を自分のものと取り違え、後に消してしまう。属性まで一致しない実体は
+        // 採用せず、利用者の実体も消さず、自分の「Home」を作る。
         PointSnapshot recorded = point("a", "Base", 10, 64, -20);
         PointSnapshot renamed = new PointSnapshot(recorded.id(), "Home", 10, 64, -20,
                 recorded.dimensionId(), recorded.rgb());
-        WaypointReconciler.Entity user = new WaypointReconciler.Entity("Home", 10, 64, -20);
+        WaypointReconciler.Entity user = new WaypointReconciler.Entity("Home", 10, 64, -20, "H", 0);
 
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(renamed.id(), renamed),
@@ -171,10 +172,9 @@ class WaypointReconcilerTest {
                 List.of(user),
                 true);
 
-        assertTrue(plan.creations().isEmpty()); // 手作りの「Home」は取り込まない
-        assertTrue(plan.removals().isEmpty());  // 座標が一致する利用者の実体も消さない
-        assertTrue(plan.record().isEmpty());    // 自分の管理分として記録にも載せない
-        assertFalse(plan.changesTheSet());
+        assertEquals(List.of(renamed), plan.creations()); // 手作りの「Home」は取り込まず自分の分を作る
+        assertTrue(plan.removals().isEmpty());            // 座標が一致する利用者の実体も消さない
+        assertEquals(Map.of(renamed.id(), renamed), plan.record());
     }
 
     @Test
@@ -196,6 +196,62 @@ class WaypointReconcilerTest {
     }
 
     @Test
+    void removesOwnWaypointNotUserWaypointWithSameNameAndPosition() {
+        // 巻物の地点を追跡中、利用者が同じ名前・同じ座標へ手作りウェイポイントを作った
+        // （Xaero は先頭に挿入する）。手作り側は略号 "MG"・色 1 で、この MOD が作る
+        // "G"・色 6 とは違う。巻物の地点が消える時、消すのは利用者の実体(0)ではなく自分の実体(1)。
+        PointSnapshot own = point("GammaFire", "GammaFire", 40, -60, 2);
+        WaypointReconciler.Entity user =
+                new WaypointReconciler.Entity("GammaFire", 40, -60, 2, "MG", 1);
+        WaypointReconciler.Entity mine = entity(own);
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(),
+                Map.of(own.id(), own),
+                List.of(user, mine), // Xaero は利用者の実体を先頭に置く
+                true);
+
+        assertEquals(List.of(1), plan.removals()); // 利用者(0)ではなく自分(1)を消す
+        assertTrue(plan.creations().isEmpty());
+        assertTrue(plan.record().isEmpty());
+    }
+
+    @Test
+    void duplicateIdenticalEntitiesRemoveOnlyOne() {
+        // 完全に同一の実体が 2 つ（利用者が同じ設定で複製した等）。記録から消えた時、
+        // 消すのは 1 つだけ。位置で狙い撃ちするのではなく、一致した実体を 1 つ消す設計。
+        PointSnapshot a = point("a", "Base", 10, 64, -20);
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(),
+                Map.of(a.id(), a),
+                List.of(entity(a), entity(a)),
+                true);
+
+        assertEquals(List.of(0), plan.removals());
+        assertTrue(plan.record().isEmpty());
+    }
+
+    @Test
+    void adoptionIgnoresSameNameAndPositionWithDifferentInitialsOrColor() {
+        // 記録が読めない間（recordHealthy=false）は同名同座標の実体を採用して重複を作らないが、
+        // 略号か色が違う実体は利用者の手作りなので採用しない（消さず、自分の分を作る）。
+        PointSnapshot a = point("a", "Base", 10, 64, -20);
+        WaypointReconciler.Entity user =
+                new WaypointReconciler.Entity("Base", 10, 64, -20, "BX", 0);
+
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(a.id(), a),
+                Map.of(),
+                List.of(user),
+                false);
+
+        assertEquals(List.of(a), plan.creations());
+        assertTrue(plan.removals().isEmpty());
+        assertEquals(Map.of(a.id(), a), plan.record());
+    }
+
+    @Test
     void cleanStateIsNoOp() {
         PointSnapshot a = point("a", "Base", 10, 64, -20);
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
@@ -214,7 +270,7 @@ class WaypointReconcilerTest {
         // 他 MOD が API 経由で入れた名前 null のウェイポイントが混ざっても NPE で同期が止まらない。
         // null 名は "" として扱い、その実体は照合対象になる（ここでは座標が違うので一致しない）。
         PointSnapshot a = point("a", "Base", 10, 64, -20);
-        WaypointReconciler.Entity unnamed = new WaypointReconciler.Entity(null, 1, 2, 3);
+        WaypointReconciler.Entity unnamed = new WaypointReconciler.Entity(null, 1, 2, 3, null, 0);
         assertEquals("", unnamed.name());
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),

@@ -40,12 +40,12 @@ import java.util.UUID;
  * WaypointColor, WaypointPurpose, boolean disabled)} を使用する。</p>
  *
  * <p><b>利用者ウェイポイントの保護</b>: Xaero の実体からは UUID が読めないため、
- * 「記録（{@link WaypointRecord}）と名前・座標が一致する実体」だけを削除・置換の対象にする。
+ * 「記録（{@link WaypointRecord}）と名前・座標・略号・色が一致する実体」だけを削除・置換の対象にする。
  * 記録はサーバー/ワールド単位でクライアントに永続化されており、接続が切れている間に
  * 壊れた行き先の残骸も次回同期で消せる。</p>
  *
  * <p><b>作成済みの判定</b>: Xaero は {@code WaypointSet.add} だけではディスクへ保存しない
- * ことがあるため、「作成済み」は記録単独では判定せず、記録と名前・座標が一致する実体が
+ * ことがあるため、「作成済み」は記録単独では判定せず、記録と名前・座標・略号・色が一致する実体が
  * 今のセットにあるものに限る（{@link WaypointReconciler}）。実体が無ければ作り直し、
  * 実体だけあって記録が無ければ新規作成せず採用する。変更後は Xaero 自身の GUI と同じ
  * 保存経路（{@code MinimapSession.getWorldManagerIO().saveWorld(world)}）を reflection で呼ぶ。</p>
@@ -113,6 +113,8 @@ public final class XaeroBridge {
         static Method waypointGetY;          // Waypoint.getY()
         static Method waypointGetZ;          // Waypoint.getZ()
         static Method waypointGetName;       // Waypoint.getName()
+        static Method waypointGetInitials;   // Waypoint.getInitials()
+        static Method waypointGetColor;      // Waypoint.getColor() = WaypointColor.ordinal()
         static Constructor<?> waypointCtor;  // Waypoint(x,y,z,name,initials,color,purpose,disabled)
         static Method colorFromIndex;        // WaypointColor.fromIndex(int)
         static Object normalPurpose;         // WaypointPurpose.values()[0]
@@ -151,6 +153,8 @@ public final class XaeroBridge {
             waypointGetY = elementClass.getMethod("getY");
             waypointGetZ = elementClass.getMethod("getZ");
             waypointGetName = elementClass.getMethod("getName");
+            waypointGetInitials = elementClass.getMethod("getInitials");
+            waypointGetColor = elementClass.getMethod("getColor");
 
             Class<?> colorClass = Class.forName("xaero.hud.minimap.waypoint.WaypointColor");
             colorFromIndex = colorClass.getMethod("fromIndex", int.class);
@@ -211,7 +215,7 @@ public final class XaeroBridge {
                     return Outcome.RETRY;
                 }
 
-                // 現セット内の実体。名前・座標は判定に、オブジェクト自体は削除に使う
+                // 現セット内の実体。名前・座標・略号・色は判定に、オブジェクト自体は削除に使う
                 List<Object> present = new ArrayList<>();
                 List<WaypointReconciler.Entity> views = new ArrayList<>();
                 for (Object waypoint : (Iterable<?>) getWaypoints.invoke(set)) {
@@ -220,7 +224,9 @@ public final class XaeroBridge {
                             (String) waypointGetName.invoke(waypoint),
                             (Integer) waypointGetX.invoke(waypoint),
                             (Integer) waypointGetY.invoke(waypoint),
-                            (Integer) waypointGetZ.invoke(waypoint)));
+                            (Integer) waypointGetZ.invoke(waypoint),
+                            (String) waypointGetInitials.invoke(waypoint),
+                            (Integer) waypointGetColor.invoke(waypoint)));
                 }
 
                 // 「作成済み」は記録 ∩ セット内の実体。実体が無ければ作り直し、記録が無く実体だけ
