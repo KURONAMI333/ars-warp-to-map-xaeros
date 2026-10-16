@@ -22,7 +22,8 @@ Supported platforms:
 
 Ars Nouveau and Xaero's Minimap are both optional for loading the mod; without them it
 simply does nothing. Waypoints appear for the dimension you are currently in; scrolls
-pointing at another dimension are applied when you enter it.
+pointing at another dimension, and waypoints that should be removed there, are applied
+when you next enter that dimension.
 
 ## License
 
@@ -31,6 +32,6 @@ without permission or credit. See [LICENSE](LICENSE) for the full terms.
 
 ## Downloads and support
 
-Downloads: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/ars-warp-to-map).
+Downloads: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/ars-warp-to-map-xaeros).
 
 For bugs and questions, DM [@kuronami333 on X](https://x.com/kuronami333).
