@@ -65,7 +65,9 @@ public final class ArsScrollReader {
             }
             BlockPos pos = data.pos().orElse(null);
             String dimension = data.dimension();
-            if (pos == null || dimension == null || dimension.isEmpty()) {
+            // 次元 ID が ResourceLocation として解釈できない巻物は捨てる（他の巻物の同期を止めない）
+            if (pos == null || dimension == null || dimension.isEmpty()
+                    || ResourceLocation.tryParse(dimension) == null) {
                 return null;
             }
             return new ScrollDestination(

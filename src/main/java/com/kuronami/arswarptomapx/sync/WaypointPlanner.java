@@ -9,9 +9,9 @@ import java.util.UUID;
  * 巻物の行き先一覧を「あるべきウェイポイント集合」へ変換する純粋関数。
  *
  * <p>行き先が未設定・壊れた巻物はこの層へ到達する前に読み取り側で弾かれている
- * （{@code ArsScrollReader} が null を返す）。ここでは次元が空のものだけを
- * 念のため除外し、同一行き先を 1 本へ集約する。集約時は最初に現れた巻物の名前を
- * 採用する（インベントリ順で決定的）。</p>
+ * （{@code ArsScrollReader} が null を返す）。ここでは次元 ID が ResourceLocation として
+ * 解釈できないものを念のため除外し（{@link DimensionId}）、同一行き先を 1 本へ集約する。
+ * 集約時は名前が辞書順で最小のものを採用する（インベントリのスロット順に依存せず決定的）。</p>
  */
 public final class WaypointPlanner {
 
@@ -34,17 +34,20 @@ public final class WaypointPlanner {
             return desired;
         }
         for (ScrollDestination d : destinations) {
-            if (d == null || isBlank(d.dimensionId())) {
+            if (d == null || !DimensionId.isWellFormed(d.dimensionId())) {
                 continue;
             }
             UUID id = DestinationKey.of(d.dimensionId(), d.x(), d.y(), d.z());
-            desired.putIfAbsent(id, new PointSnapshot(
-                    id, d.name(), d.x(), d.y(), d.z(), d.dimensionId(), WAYPOINT_RGB));
+            PointSnapshot candidate = new PointSnapshot(
+                    id, d.name(), d.x(), d.y(), d.z(), d.dimensionId(), WAYPOINT_RGB);
+            PointSnapshot existing = desired.get(id);
+            if (existing == null) {
+                desired.put(id, candidate);
+            } else if (candidate.name().compareTo(existing.name()) < 0) {
+                // 同一行き先の巻物が複数ある時は辞書順で最小の名前を採用する
+                desired.put(id, candidate);
+            }
         }
         return desired;
-    }
-
-    private static boolean isBlank(String s) {
-        return s == null || s.isEmpty();
     }
 }
