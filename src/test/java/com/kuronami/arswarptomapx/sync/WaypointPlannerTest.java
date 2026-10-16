@@ -41,8 +41,30 @@ class WaypointPlannerTest {
                 dest("Second", 100, 70, 100, "minecraft:overworld")));
 
         assertEquals(1, plan.size());
-        // 集約時は最初に現れた巻物の名前を採用する（インベントリ順で決定的）
+        // 集約時は辞書順で最小の名前を採用する（インベントリ順に依存しない）
         assertEquals("First", plan.values().iterator().next().name());
+    }
+
+    @Test
+    void collapsePicksLexicographicallySmallestNameRegardlessOfOrder() {
+        // 辞書順で大きい名前が先に来ても、採用されるのは最小名の方
+        Map<UUID, PointSnapshot> plan = WaypointPlanner.plan(List.of(
+                dest("Zulu", 100, 70, 100, "minecraft:overworld"),
+                dest("Alpha", 100, 70, 100, "minecraft:overworld")));
+
+        assertEquals(1, plan.size());
+        assertEquals("Alpha", plan.values().iterator().next().name());
+    }
+
+    @Test
+    void unreadableDimensionIsSkippedWhileOthersRemain() {
+        Map<UUID, PointSnapshot> plan = WaypointPlanner.plan(List.of(
+                dest("Space", 0, 0, 0, "minecraft:the nether"), // 空白は不正
+                dest("TwoColons", 0, 0, 0, "a:b:c"),            // コロン 2 個は不正
+                dest("Good", 2, 3, 4, "minecraft:overworld")));
+
+        assertEquals(1, plan.size());
+        assertEquals("Good", plan.values().iterator().next().name());
     }
 
     @Test

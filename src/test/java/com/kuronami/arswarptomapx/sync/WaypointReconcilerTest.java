@@ -12,8 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 3 項突き合わせ（望ましい集合・記録・セット内の実体）のテスト。
- * 「記録はあるが実体が無い→作り直す」「記録が無いが同名同座標の実体がある→採用して重複を作らない」
- * 「途中で例外→次回重複しない」「利用者の実体は消さない」を守る。
+ * 「記録はあるが実体が無い→作り直す」「記録が読めない間は同名同座標の実体を採用して重複を作らない」
+ * 「記録が健全な時の未記録の同名同座標実体は利用者のものとして触らない」「利用者の実体は消さない」を守る。
  */
 class WaypointReconcilerTest {
 
@@ -36,7 +36,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(a.id(), a),
-                List.of());
+                List.of(),
+                true);
 
         assertEquals(List.of(a), plan.creations());
         assertTrue(plan.removals().isEmpty());
@@ -46,12 +47,13 @@ class WaypointReconcilerTest {
 
     @Test
     void recordMissingButEntityMatchesIsAdoptedNoDuplicate() {
-        // 記録キーのずれ・破損で記録が空。セットには同名同座標の実体がある
+        // 記録ファイルがまだ無い（読めない）状態。セットには同名同座標の実体がある → 採用して重複を作らない
         PointSnapshot a = point("a", "Base", 10, 64, -20);
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(),
-                List.of(entity(a)));
+                List.of(entity(a)),
+                false);
 
         assertTrue(plan.creations().isEmpty());
         assertTrue(plan.removals().isEmpty());
@@ -60,14 +62,33 @@ class WaypointReconcilerTest {
     }
 
     @Test
+    void healthyRecordLeavesUntrackedIdenticalEntityAlone() {
+        // 記録が健全に読めているのに、その地点は記録に無い。同名同座標の実体は利用者の手作り。
+        // 消さず・自分の分も作らず（重複回避）・記録にも載せない。
+        PointSnapshot a = point("a", "Base", 10, 64, -20);
+        WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
+                Map.of(a.id(), a),
+                Map.of(),
+                List.of(entity(a)),
+                true);
+
+        assertTrue(plan.creations().isEmpty());
+        assertTrue(plan.removals().isEmpty());
+        assertTrue(plan.record().isEmpty());
+        assertFalse(plan.changesTheSet());
+    }
+
+    @Test
     void partialFailureThenRetryDoesNotDuplicate() {
-        // 前回 A を作った直後に例外 → 記録は未更新のまま、セットには A の実体だけある
+        // 前回 A を作った直後に例外 → 記録が未保存のまま、セットには A の実体だけある。
+        // 記録がまだ読めないので A を採用し、B だけ作る（重複しない）
         PointSnapshot a = point("a", "Base", 10, 64, -20);
         PointSnapshot b = point("b", "Mine", 30, 70, 5);
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a, b.id(), b),
                 Map.of(),
-                List.of(entity(a)));
+                List.of(entity(a)),
+                false);
 
         assertEquals(List.of(b), plan.creations()); // A は採用、B だけ作る
         assertTrue(plan.removals().isEmpty());
@@ -80,7 +101,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(),
                 Map.of(a.id(), a),
-                List.of(entity(a)));
+                List.of(entity(a)),
+                true);
 
         assertEquals(List.of(0), plan.removals());
         assertTrue(plan.creations().isEmpty());
@@ -93,7 +115,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(),
                 Map.of(a.id(), a),
-                List.of());
+                List.of(),
+                true);
 
         assertTrue(plan.removals().isEmpty());
         assertTrue(plan.record().isEmpty());
@@ -108,7 +131,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(moved.id(), moved),
                 Map.of(old.id(), old),
-                List.of(entity(old)));
+                List.of(entity(old)),
+                true);
 
         assertEquals(List.of(0), plan.removals());      // 旧座標の実体を消す
         assertEquals(List.of(moved), plan.creations()); // 新座標へ作り直す
@@ -122,7 +146,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(a.id(), a),
-                List.of(entity(a), user));
+                List.of(entity(a), user),
+                true);
 
         assertTrue(plan.creations().isEmpty());
         assertTrue(plan.removals().isEmpty()); // user の位置(1)は消さない
@@ -136,7 +161,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(a.id(), a),
-                List.of(entity(a)));
+                List.of(entity(a)),
+                true);
 
         assertTrue(plan.removals().isEmpty());
         assertTrue(plan.creations().isEmpty());
@@ -153,7 +179,8 @@ class WaypointReconcilerTest {
         WaypointReconciler.Plan plan = WaypointReconciler.reconcile(
                 Map.of(a.id(), a),
                 Map.of(a.id(), a),
-                List.of(unnamed, entity(a)));
+                List.of(unnamed, entity(a)),
+                true);
 
         assertTrue(plan.removals().isEmpty());
         assertTrue(plan.creations().isEmpty());
